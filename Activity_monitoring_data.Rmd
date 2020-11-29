@@ -1,0 +1,173 @@
+---
+title: "Activity monitoring data"
+author: "Hans"
+date: "11/28/2020"
+output: html_document
+---
+
+### Loading and pre-processing the data
+```{r setup, include=FALSE, echo=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+
+## download data
+rawDataDir <- "./reproduceRaw"
+rawDataUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip"
+rawDataFilename <- "reproduceData.zip"
+rawDataDFn <- paste(rawDataDir, "/", "reproduceData.zip", sep = "")
+dataDir <- "./reproduceDataDir"
+
+if (!file.exists(rawDataDir)) {
+  dir.create(rawDataDir)
+  download.file(url = rawDataUrl, destfile = rawDataDFn)
+}
+if (!file.exists(dataDir)) {
+  dir.create(dataDir)
+  unzip(zipfile = rawDataDFn, exdir = dataDir)
+}
+
+activity <- read.csv(paste(dataDir, sep="", "/activity.csv"))
+activity$date <- as.Date(activity$date)
+```
+
+### What is mean total number of steps taken per day?
+
+* Calculate the total number of steps taken per day
+```{r} 
+comps <- complete.cases(activity$steps)
+completes <- activity[comps,]
+by_day <- aggregate(x = completes$steps,              
+    by = list(completes$date),
+    FUN = sum)   
+colnames(by_day) <- c("Day", "Steps")
+print(by_day)
+```
+
+
+* Make a histogram of the total number of steps taken each day
+```{r}
+steps_histogram <- ggplot(by_day, aes(x=Steps/1000)) + geom_histogram(color="aquamarine", fill="aquamarine3") + 
+      labs(title="Daily Step Count Histogram", y="Count", x="Steps (Thousands)")
+steps_histogram
+```
+
+* Calculate and report the mean and median of the total number of steps taken per day
+```{r}
+median(by_day$Steps)
+mean(by_day$Steps)
+```
+The average number of daily steps is 10,766.19.
+The median number of daily steps is 10,765.
+
+### What is the average daily activity pattern?
+
+* Make a time series plot of the 5-minute interval and the average number of steps taken, averaged across all days
+```{r}
+days <- nrow(by_day)
+
+by_interval <- aggregate(x = completes$steps,              
+                    by = list(completes$interval),
+                    FUN = sum) 
+
+colnames(by_interval) <- c("Interval", "Steps")
+
+by_interval$Steps <- by_interval$Steps/days
+
+interval_series <- ggplot(by_interval, aes(x=Interval, y=Steps)) + geom_line(color="deeppink", size=1.5)
+interval_series + labs(title="Average Steps by 5-min Interval", y="Steps") + theme(legend.position="none")
+```
+
+* Which 5-minute interval, on average across all the days in the dataset, contains the maximum number of steps?
+```{r}
+max_row <- which.max(by_interval$Steps)
+by_interval$Interval[max_row]
+by_interval$Steps[max_row]/days
+```
+Interval #835 contains the maximum number of steps, averaged across all days: 206.17 steps.
+
+### Imputing missing values
+
+* Calculate and report the total number of missing values in the dataset
+```{r}
+missing_values <- sum(is.na(activity[,1]))
+missing_values
+missing_values/((60*24)/5)
+```
+There are 2,304 rows with NA in the dataset. These are the result of 8 full days of missing data.
+
+* Devise a strategy for filling in all of the missing values in the dataset
+My script imputes the NA values using the mean for each 5 minute interval across all days.
+
+*Create a new dataset that is equal to the original dataset but with the missing data filled in
+```{r}
+NAs <- subset(activity, is.na(activity[,1]))
+
+for(i in 1:nrow(NAs)) {
+  NAs$steps <-by_interval[match(NAs$interval, by_interval$Interval),2]
+}
+
+colnames(NAs) <- c("Steps", "Date", "Interval")
+colnames(completes) <- c("Steps", "Date", "Interval")
+
+combined <- rbind(NAs, completes)
+
+by_day_combined <- aggregate(x = combined$Steps,              
+                    by = list(combined$Date),
+                    FUN = sum)   
+
+colnames(by_day_combined) <- c("Date", "Steps")
+```
+
+* Make a histogram of the total number of steps taken each day
+```{r}
+combined_histogram <- ggplot(by_day_combined, aes(x=Steps/1000)) + geom_histogram(color="tomato2", fill="firebrick") + 
+  labs(title="Daily Step Count Histogram \n Imputed Values for Missing Data", y="Count", x="Steps (Thousands)")
+combined_histogram
+```
+
+* Calculate and report the mean and median daily steps
+```{r}
+mean(by_day_combined$Steps)
+median(by_day_combined$Steps)
+```
+The mean was the same as before: 10,766.19 steps.
+The median is 1.19 steps higher, changing from 10,765 steps to 10766.19 steps.
+
+The impact of imputing missing data on these measures of central tendency was relatively small. 
+
+### Are there differences in activity patterns between weekdays and weekends?
+Subject is generally more active on weekdays.
+Activity levels are skewed earlier on weekdays.
+```{r}
+combo <- rbind(completes, NAs)
+
+combo$DOW <- weekdays(combo$Date)
+
+weekends <- subset(combo, DOW=="Saturday" | DOW=="Sunday")
+weekends$is_weekend <- "Weekend"
+
+weekdays <- subset(combo, DOW=="Monday" | DOW=="Tuesday" | DOW=="Wednesday" | DOW=="Thursday" | DOW=="Friday")
+weekdays$is_weekend <- "Weekday"
+
+WDs_by_int <- aggregate(x = weekends$Steps,              
+                         by = list(weekends$Interval),
+                         FUN = sum) 
+
+WDs_by_int$is_weekend <- "Weekend"
+
+WEs_by_int <- aggregate(x = weekdays$Steps,              
+                        by = list(weekdays$Interval),
+                        FUN = sum) 
+
+WEs_by_int$is_weekend <- "Weekday"
+
+days_with_imp <- length(unique(combo$Date))
+
+combo_days <- rbind(WDs_by_int, WEs_by_int)
+colnames(combo_days) <- c("Interval", "Steps", "DOW")
+combo_days$Steps <- combo_days$Steps/days_with_imp
+
+final_plot <- ggplot(combo_days, aes(x=Interval, y=Steps, group=DOW, color=DOW))
+final_plot + geom_line(size=2) + labs(y="Steps", title="Average Steps by 5-Minute Interval \n Weekdays vs. Weekends") + theme(legend.title =element_blank())
+```
+
